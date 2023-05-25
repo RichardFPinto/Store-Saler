@@ -1,0 +1,686 @@
+Projeto da competição de treinamento da kaggle da store sales
+link: https://www.kaggle.com/competitions/store-sales-time-series-forecasting
+Link do portifolio: 
+
+#Pacotes
+```{r}
+library(dplyr)
+library(stringr)
+library(tibble)
+library(lubridate)
+library(forecast)
+library(e1071)
+library(feasts)
+library(seastests)
+library(ggplot2)
+#library(tidyverse)
+library(neuralnet)
+library(urca)
+library(tsibble)
+library(trend)
+library(stats)
+library(tseries)
+library(FinTS)
+library(tsfgrnn)
+```
+
+
+# Carregando os dados
+Como os dados estão seprados corretamente e os dados já estão limpos podemos carregar todos eles, sem necessidade de modificações na função read.csv
+```{r}
+#holy = read.csv("F:/Github/Kaggle/Store sales/holidays_events.csv")
+#oil = read.csv("F:/Github/Kaggle/Store sales/oil.csv")
+#sample = read.csv("F:/Github/Kaggle/Store sales/sample_submission.csv")
+#stores = read.csv("F:/Github/Kaggle/Store sales/stores.csv")
+train = read.csv("F:/Github/Kaggle/Store sales/train.csv")
+test = read.csv("F:/Github/Kaggle/Store sales/test.csv")
+#transactions = read.csv("F:/Github/Kaggle/Store sales/transactions.csv")
+```
+```{r}
+source('F:/Github/Funções/Métricas.R')
+```
+
+
+# Primeira analise da serie
+analisando a serie temporal principal, precisamos dar uma olhada nas colunas
+```{r}
+train
+str(train)
+unique(train$family)
+length(unique(train$date))
+summary(train$sales)
+```
+
+```{r}
+head(train)
+tail(train)
+summary(train$sales)
+```
+
+vendo valores duplicados
+```{r}
+table(duplicated(train))
+```
+
+
+
+Vamos somar todas as vendas por datas e analisar as caracteristica da serie temporal, como sua sazonalidade e tendencias
+# Treino
+```{r}
+#para alguma family especifica usar 
+# para saber quais family tem no dataset
+# unique(train$family)
+# para fazer um dataset e fazer a modelagem com uma familia especifica
+#df = train[train$family == "AUTOMOTIVE",]
+# fazer com todas as vendas 
+df0 = train
+df0 = df0 %>% mutate(date = as_date(date))
+df0 = df0 %>% group_by(date) %>% summarise(sales = sum(sales))
+df1 = train
+df1 = df1 %>% mutate(date = as_date(date))
+df1 = df1 %>% group_by(date) %>% summarise(onpromotion = sum(onpromotion))
+df = cbind(df0, df1$onpromotion)
+colnames(df) = c("date","sales","onpromotion")
+```
+verificando valores duplicado depois de juntar os valores
+```{r}
+table(duplicated(df))
+```
+verificando a corelação entre as vendas e as promoções, e podemos ver que é baixa a correlação apenas de 57%
+```{r}
+cor(df$sales, df$onpromotion)
+```
+```{r}
+head(test)
+tail(test)
+table(test$date)
+```
+# Teste
+```{r}
+#para alguma family especifica usar 
+# para saber quais family tem no dataset
+# unique(test$family)
+# para fazer um dataset e fazer a modelagem com uma familia especifica
+#df_test = test[test$family == "AUTOMOTIVE",]
+# fazer com todas as vendas 
+df_test = test
+df_test = df_test %>% mutate(date = as_date(date))
+df_test = df_test %>% group_by(date) %>% summarise(onpromotion = sum(onpromotion))
+df_test
+table(df_test$date)
+```
+Não vai poder ser usado os testes, pois não tem as vendas
+
+Após ter somado os valores da venda de todos os dias, podemos analiser a serie de vendas
+# Analise dos treinos
+```{r}
+# Média, mediana, maximo,minimo e quartis
+print("Medidas")
+summary(df$sales)
+# Assimetria
+print("Assimetria")
+skewness(df$sales, na.rm = FALSE, type = 3)
+# Curtose
+print("Curtose")
+kurtosis(df$sales, na.rm = FALSE, type = 3)
+# Desvio Padrão
+print("Desvio Padrão")
+sd(df$sales)
+# Coef. de variação
+source('F:/Github/Funções/coef_var.R')
+print("Coef. de variação")
+cv(df$sales)
+```
+## Graficos
+## Linha
+Para uma analise grafica para complementar as medidas apresentadas
+```{r}
+g_linha = ggplot(data= df, aes(x= date , y = sales)) + geom_line()+ labs(title = "")+ xlab("Dias")+ ylab("Vendas") +
+  theme(axis.text.x = element_text(color = "grey20", size =20, angle = 0, hjust = .5, vjust = .5, face = "plain"),
+        axis.text.y = element_text(color = "grey20", size = 20, angle = 0, hjust = 1, vjust = 0, face = "plain"),  
+        axis.title.x = element_text(color = "grey20", size = 20, angle = 0, hjust = .5, vjust = 0, face = "plain"),
+        axis.title.y = element_text(color = "grey20", size = 20, angle = 90, hjust = .5, vjust = .5, face = "plain"),
+        plot.title = element_text(size = 30, hjust=0.5))
+g_linha
+```
+```{r}
+#write.csv(df,"F:/Github/Kaggle/Store sales/serie_geral.csv", row.names = FALSE)
+```
+
+
+Podesse reparar uma possibilidade de tendencia e sazonalidade na vendas em geral, mas vamos olhar o boxplot e histograma antes de verificar essa suposições
+
+Primeiro o boxplot, que é bom para visualizar a serie se comporta e observar outliers
+## Boxplot
+```{r}
+g_box = ggplot(data= df, aes(y = sales)) + geom_boxplot()+ labs(title = "(b)")+ xlab("")+ ylab("Vendas") +
+  theme(axis.text.x = element_text(color = "grey20", size =20, angle = 0, hjust = .5, vjust = .5, face = "plain"),
+        axis.text.y = element_text(color = "grey20", size = 20, angle = 0, hjust = 1, vjust = 0, face = "plain"),  
+        axis.title.x = element_text(color = "grey20", size = 20, angle = 0, hjust = .5, vjust = 0, face = "plain"),
+        axis.title.y = element_text(color = "grey20", size = 20, angle = 90, hjust = .5, vjust = .5, face = "plain"),
+        plot.title = element_text(size = 30, hjust=0.5))
+g_box
+```
+Podesse reparar que a serie tem bem poucos outliers, vamos ver quais valores são considerados outliers e em que dias são eles
+## outliers
+```{r}
+out = boxplot(df$sales)
+x = out$out
+outliers = c()
+for (i in 1:length(x)){
+  ot = df[df$sales == x[i],]
+  outliers = rbind(outliers, ot)
+}
+print(outliers)
+```
+
+# Tendencia
+Agora para a tendencias, vamos usar a parte grafica e teste especificos para isso, para confirmação da tendencia na serie
+
+Para os proximos passos precisamos decompor a serie, vamos usar o metodo seats_x13, pois é o mais comum para series financeiras e nas agencias mundo a fora. Só precisamos deixar ela mensal para melhor visualização grafica
+```{r}
+df_mes = df %>% mutate(date = yearmonth(date))
+df_mes = df_mes %>% group_by(date) %>% summarise(sales= sum(sales))
+df_mes = as_tsibble(df_mes)
+df_mes
+```
+
+
+```{r}
+seats_dcmp <- df_mes %>% model(seats = X_13ARIMA_SEATS(sales ~ seats())) %>% components()
+autoplot(seats_dcmp) + labs(title = "Decomposição de vendas mensal usando SEATS")
+```
+
+
+grafico somente da tendencia
+```{r}
+ggplot(data = df_mes, aes(x = date, y = sales)) + geom_line()  + geom_line(aes(y =seats_dcmp$trend), color = "red") + xlab("Meses")+ ylab("Vendas")
+```
+
+##Testes de tendencia
+
+```{r}
+###Cox and Stuart Trend Test
+cs.test(df_mes$sales)
+###Mann-Kendall Trend Test]
+mk.test(df_mes$sales, "two.sided")
+### Wald-Wolfowitz
+ww.test(df_mes$sales)
+```
+
+Após confirmado que a serie possui tendencia, vamos testar a sazonalidade que é importante para a modelagem estatistica dessa serie
+
+#Sazonalidade
+
+##Graficamente a sazonalidade
+```{r}
+ggplot(data = df_mes, aes(x = date))  + geom_line(aes(y =seats_dcmp$seasonal ), color = "blue") + xlab("Meses")+ ylab("Vendas")
+
+```
+Aparentemente existe uma sazonalidade, mas precisa ser testado, começaremos com o testes
+
+##Testes de sazonalidade
+```{r}
+kw(ts(df$sales, frequency = 365))
+qs(ts(df$sales, frequency = 365))
+welch(ts(df$sales, frequency = 365))
+```
+# Criando os retornos
+```{r}
+retornos = diff(df$sales)
+final = length(retornos)
+t = length(retornos) - (length(df_test$date) - 1)
+treino = retornos[c(1:t)]
+teste = retornos[c(t:final)]
+```
+
+Agora que foi definido que a serie possui não sazonalidade, podemos começar a 
+# Modelagem Estatistica
+## ARIMA
+
+Começando pela modelagem ARIMA(nesse caso sarima, pois possui sazonalidade), precisamos fazer o teste ADF e os graficos da FAC e FACP
+
+###Teste ADF 
+
+Para definir o numero de lags no adf, foi feito a função n_lags, quais calcula a quantidade de lags necessarias para o teste ADF
+```{r}
+source('F:/Github/Funções/n_lags.R')
+n_lags(treino)
+```
+
+fazendo o teste adf , começando com a tendencia
+
+```{r}
+ADF = ur.df(treino, type = c("trend"),lags = 24, selectlags = "BIC")
+summary(ADF)
+```
+
+como nossa serie apresenta pelo teste adf têndencia e constante, mas não é necessario diferenciação, pois já é estacionario em nivel
+
+Para confirmar a estacionariedade testamos tambem com a função ndiffs
+
+```{r}
+ndiffs(treino, alpha = 0.05, test = "adf", type ="level", max.d = 24)
+ndiffs(treino, alpha = 0.05, test = "adf", type ="trend", max.d = 24)
+```
+```{r}
+ndiffs(treino, alpha = 0.05, test = "kpss", type ="level", max.d = 24)
+ndiffs(treino, alpha = 0.05, test = "kpss", type ="trend", max.d = 24)
+```
+```{r}
+ndiffs(treino, alpha = 0.05, test = "pp", type ="level", max.d = 24)
+ndiffs(treino, alpha = 0.05, test = "pp", type ="trend", max.d = 24)
+```
+Na serie não é necessario diferenciações (d = 0)
+FAC
+```{r}
+acf <- Acf(treino, lag.max = 20, plot = FALSE)
+acfdf <- with(acf, data.frame(lag, acf))
+conf.level <- 0.95
+ciline <- qnorm((1 - conf.level)/2)/sqrt(length(treino))
+acf <- ggplot(data = acfdf, mapping = aes(x = lag, y = acf)) +
+       geom_hline(aes(yintercept = 0)) +
+       geom_segment(mapping = aes(xend = lag, yend = 0))+
+  geom_hline(aes(yintercept = ciline), linetype = 2, color = 'darkblue') + 
+  geom_hline(aes(yintercept = -ciline), linetype = 2, color = 'darkblue')+ labs(title = "(a)")+ xlab("Defasagem")+ ylab("Autocorrelação") + xlim(1, 20) + 
+  scale_x_discrete(name ="Defasagem", limits=c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20"))  +
+  theme(axis.text.x = element_text(color = "grey20", size =15, angle = 0, hjust = .5, vjust = .5, face = "plain"),
+        axis.text.y = element_text(color = "grey20", size = 15, angle = 0, hjust = 1, vjust = 0, face = "plain"),  
+        axis.title.x = element_text(color = "grey20", size = 20, angle = 0, hjust = .5, vjust = 0, face = "plain"),
+        axis.title.y = element_text(color = "grey20", size = 20, angle = 90, hjust = .5, vjust = .5, face = "plain"),
+        plot.title = element_text(size = 30, hjust=0.5))
+acf
+```
+
+FACP
+```{r}
+pacf <- Pacf(treino, lag.max = 20, plot = FALSE)
+pacfdf <- with(pacf, data.frame(lag, acf))
+###bpacfdf[1,2] = 0
+conf.level <- 0.95
+ciline <- qnorm((1 - conf.level)/2)/sqrt(length(treino))
+pacf <- ggplot(data = pacfdf, mapping = aes(x = lag, y = acf)) +
+       geom_hline(aes(yintercept = 0)) +
+       geom_segment(mapping = aes(xend = lag, yend = 0))+
+  geom_hline(aes(yintercept = ciline), linetype = 2, color = 'darkblue') + 
+  geom_hline(aes(yintercept = -ciline), linetype = 2, color = 'darkblue')+ labs(title = "(a)")+ ylab("Autocorrelação parcial") + xlim(1, 20) + scale_x_discrete(name ="Defasagem", limits=c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20"))+ 
+  theme(axis.text.x = element_text(color = "grey20", size =15, angle = 0, hjust = .5, vjust = .5, face = "plain"),
+        axis.text.y = element_text(color = "grey20", size = 15, angle = 0, hjust = 1, vjust = 0, face = "plain"),  
+        axis.title.x = element_text(color = "grey20", size = 20, angle = 0, hjust = .5, vjust = 0, face = "plain"),
+        axis.title.y = element_text(color = "grey20", size = 20, angle = 90, hjust = .5, vjust = .5, face = "plain"),
+        plot.title = element_text(size = 30, hjust=0.5))
+pacf
+```
+A observando os graficos da FAC (2) e FACP (7), ficou um pouco inconclusivo via ser testado do 1 ao 7
+
+ARIMA utilizando a força bruta usando a função T_arima
+### modelagem
+```{r}
+source('F:/Github/Funções/T_arima.R')
+T_arima(c(1:2), d =0,q = c(1:6), y = 10,dados = treino, constant = TRUE, mean = FALSE, drift = TRUE)
+Tab_arima
+```
+
+
+melhor modelo foi o 7,0,7, mas todos os modelos falharam nas premisas teoricas
+```{r}
+arima = Arima(treino,order=c(3,0,6), include.constant = TRUE, include.mean = FALSE, include.drift = TRUE)
+```
+
+###Resumo
+
+```{r}
+summary(arima)
+```
+
+
+### Residuos
+
+```{r}
+res_arima = residuals(arima)
+jarque.bera.test(na.omit(res_arima))
+ArchTest(na.omit(res_arima),lag = 24)
+Box.test(na.omit(res_arima), lag = 24, type = "Ljung-Box", fitdf = 14)
+```
+
+Agora com o melhor modelo, mesmo não satisfazendo todas as premissas teoricas
+### Grafico
+
+```{r}
+plot(res_arima)
+hist(res_arima)
+boxplot(res_arima)
+```
+para a verificar a precisão do modelo usaremos
+### Previsão
+```{r}
+t_prev = length(teste)
+previsão_arima = forecast::forecast(arima, h= 16)
+prev_arima = as.numeric(previsão_arima$mean)
+```
+```{r}
+plot(previsão_arima, ylab = "Dólares", main="Método Média", fcol="white")
+lines(fitted(previsão_arima), col="red")
+lines(prev_arima, col="red", type="o")
+```
+
+### Precisão
+```{r}
+metricas = c()
+```
+
+```{r}
+MAE_VAR(prev_arima,teste)
+RMSE_VAR(prev_arima,teste)
+MAPE_VAR(prev_arima,teste)
+linha = cbind("ARIMA",maeee,rmseee,mapeee)
+metricas = rbind(metricas,linha)
+```
+
+
+# Modelo Ingenuo
+
+```{r}
+set.seed(1234)
+ing = rwf(treino, h = length(teste))
+```
+
+## Resumo
+
+```{r}
+summary(ing)
+```
+
+## Residuos
+
+```{r}
+res_ing = residuals(ing)
+summary(res_ing)
+skewness(na.omit(res_ing))
+kurtosis(na.omit(res_ing))
+```
+
+## Grafico
+
+```{r}
+plot(res_ing)
+hist(res_ing)
+boxplot(res_ing)
+```
+
+## Teste nos residuos
+
+```{r}
+# Normalidade
+jarque.bera.test(na.omit(res_ing))
+# Homocedastidade
+ArchTest(res_ing)
+# Independência
+Box.test(res_ing, lag = 10, type = "Ljung-Box")
+```
+
+## Precisão
+
+```{r}
+MAE_VAR(ing$mean,teste)
+RMSE_VAR(ing$mean,teste)
+MAPE_VAR(ing$mean,teste)
+linha = cbind("Ingenuo",maeee,rmseee,mapeee)
+metricas = rbind(metricas,linha)
+```
+
+## Previsão Grafico
+
+```{r}
+plot(ing, ylab = "Dólares", main="Método Média", fcol="white")
+lines(fitted(ing), col="red")
+lines(ing$mean, col="red", type="o")
+```
+# Modelo média
+
+```{r}
+set.seed(1234)
+media = meanf(treino,h = length(teste))
+```
+
+## Summary
+
+```{r}
+summary(media)
+```
+
+## Residuos
+
+```{r}
+res_m = residuals(media)
+summary(res_m)
+skewness(res_m)
+kurtosis(res_m)
+```
+
+## Grafico
+
+```{r}
+plot(res_m, type = "l")
+hist(res_m)
+```
+
+## Teste nos residuos
+
+```{r}
+# Normalidade
+jarque.bera.test(na.omit(res_m))
+# Homocedastidade
+ArchTest(res_m)
+# Independência
+Box.test(res_m, lag = 10, type = "Ljung-Box")
+```
+
+## Precisão
+
+```{r} 
+MAE_VAR(media$mean,teste)
+RMSE_VAR(media$mean,teste)
+MAPE_VAR(media$mean,teste)
+linha = cbind("Média",maeee,rmseee,mapeee)
+metricas = rbind(metricas,linha)
+```
+
+## Previsão
+
+```{r}
+plot(media, ylab = "Dólares", main="Método Média", fcol="white")
+lines(fitted(media), col="red")
+lines(media$mean, col="red", type= "o")
+```     
+
+# Modelo drift
+
+```{r}
+set.seed(1234)
+drift = rwf(treino, h = length(teste), drift = T)
+```
+
+## Summary
+
+```{r}
+summary(drift)
+```
+
+## Residuos
+
+```{r}
+res_d = residuals(drift)
+summary(res_d)
+skewness(na.omit(res_d))
+kurtosis(na.omit(res_d))
+```
+
+## Grafico
+
+```{r}
+plot(res_d)
+hist(res_d)
+acf(na.omit(res_d))
+
+```
+
+## Teste nos residuos
+
+```{r}
+# Normalidade
+jarque.bera.test(na.omit(res_d))
+# Homocedastidade
+ArchTest(res_d)
+#teste de independência
+Box.test(res_d, lag = 10, type = "Ljung-Box")
+```
+
+## Precisão
+
+```{r}
+
+MAE_VAR(drift$mean,teste)
+RMSE_VAR(drift$mean,teste)
+MAPE_VAR(drift$mean,teste)
+linha = cbind("Drift",maeee,rmseee,mapeee)
+metricas = rbind(metricas,linha)
+```
+
+## Previsão
+
+```{r}
+plot(drift, ylab = "Dólares", main="Método Drift", fcol="white")
+lines(fitted(drift), col="red")
+lines(drift$mean, col="red", type="o")
+```
+
+# Modelo naive
+
+```{r}
+set.seed(1234)
+naive = naive(treino, h=16)
+```
+
+## Summary
+
+```{r}
+summary(naive)
+```
+
+## Residuos
+
+```{r}
+res_n = residuals(naive)
+summary(res_n)
+skewness(na.omit(res_n))
+kurtosis(na.omit(res_n))
+```
+
+## Grafico
+
+```{r}
+plot(res_n)
+hist(res_n)
+acf(na.omit(res_n))
+```
+
+## Teste nos residuos
+
+```{r}
+# Normalidade
+jarque.bera.test(na.omit(res_n))
+# Homocedastidade
+ArchTest(res_n)
+#teste de independência
+Box.test(res_n, lag = 10, type = "Ljung-Box")
+
+```
+
+## Precisão
+
+```{r}
+MAE_VAR(naive$mean,teste)
+RMSE_VAR(naive$mean,teste)
+MAPE_VAR(naive$mean,teste)
+linha = cbind("Naive",maeee,rmseee,mapeee)
+metricas = rbind(metricas,linha)
+```
+
+## Previsão
+
+```{r}
+plot(naive, ylab = "Dólares", main="Método Drift", fcol="white")
+lines(fitted(naive), col="red")
+lines(naive$mean, col="red", type="o")
+```
+
+# Modelos Computacionais
+# RNA
+Modelo
+```{r}
+rna = forecast::nnetar(treino)
+print(rna)
+```
+
+# Previsão
+```{r}
+prev_rna = forecast::forecast(rna, h=length(teste))
+prev_rna
+```
+# Residuos
+
+```{r}
+res_rna = rna$residuals
+# Normalidade
+jarque.bera.test(na.omit(res_rna))
+# Homocedastidade
+ArchTest(res_rna)
+#teste de independência
+Box.test(res_rna, lag = 10, type = "Ljung-Box")
+```
+# Precisão
+
+```{r}
+MAE_VAR(prev_rna$mean,teste)
+RMSE_VAR(prev_rna$mean,teste)
+MAPE_VAR(prev_rna$mean,teste)
+linha = cbind("RNA",maeee,rmseee,mapeee)
+metricas = rbind(metricas,linha)
+```
+# grnn
+
+```{r}
+grnn = grnn_forecasting(treino, h = length(teste))
+```
+
+```{r}
+MAE_VAR(grnn$prediction,teste)
+RMSE_VAR(grnn$prediction,teste)
+MAPE_VAR(grnn$prediction,teste)
+linha = cbind("GRNN",maeee,rmseee,mapeee)
+metricas = rbind(metricas,linha)
+```
+```{r}
+plot(grnn$orig_timeS, type = "l")
+lines(grnn$prediction, col = "red")
+```
+
+
+Vamos ordernar pelo pelas metricas para ver quem será melhor em cada métrica,caso de empate será usado o rmse como mais imporante, pois muitos autores indicam esse como a melhor metrica de precisão
+```{r}
+metricas = as.data.frame(metricas)
+colnames(metricas) = c("modelo", "mae","rmse","mape")
+metricas$mae = as.numeric(metricas$mae)
+metricas$rmse = as.numeric(metricas$rmse)
+metricas$mape = as.numeric(metricas$mape)
+metricas[order(metricas$rmse),] # ARIMA
+```
+```{r}
+metricas[order(metricas$mae),] # ARIMA
+```
+
+```{r}
+metricas[order(metricas$mape),] # média
+```
+
